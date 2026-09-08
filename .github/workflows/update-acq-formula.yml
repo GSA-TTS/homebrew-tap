@@ -1,0 +1,152 @@
+name: Update acq Homebrew Formula
+
+on:
+  schedule:
+    # Every 15 minutes, offset from common top-of-hour GitHub Actions load.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "agentic-coding-quickstart release tag to package, e.g. v3.1.0. Leave blank for latest release."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-acq-formula
+  cancel-in-progress: false
+
+jobs:
+  update-formula:
+    name: Update Formula/acq.rb
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out homebrew tap
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: true
+
+      - name: Resolve acq release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_TAG}" ]; then
+            tag="${INPUT_TAG}"
+            gh api "repos/GSA-TTS/agentic-coding-quickstart/releases/tags/${tag}" >/dev/null
+          else
+            tag="$(gh api repos/GSA-TTS/agentic-coding-quickstart/releases/latest --jq '.tag_name')"
+          fi
+
+          if [ -z "${tag}" ] || [ "${tag}" = "null" ]; then
+            echo "Could not resolve an acq release tag." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          tarball_url="https://github.com/GSA-TTS/agentic-coding-quickstart/archive/refs/tags/${tag}.tar.gz"
+
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "tarball_url=${tarball_url}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Calculate source tarball sha256
+        id: tarball
+        env:
+          TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
+        run: |
+          set -euo pipefail
+
+          curl --fail --location --silent --show-error "${TARBALL_URL}" --output acq.tar.gz
+          sha256="$(sha256sum acq.tar.gz | cut -d ' ' -f 1)"
+
+          echo "sha256=${sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update formula
+        env:
+          TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
+          SHA256: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+
+          test -f Formula/acq.rb
+
+          ruby <<'RUBY'
+          path = "Formula/acq.rb"
+          tarball_url = ENV.fetch("TARBALL_URL")
+          sha256 = ENV.fetch("SHA256")
+
+          formula = File.read(path)
+
+          formula.sub!(/^  url\s+["'].+["']$/, %(  url "#{tarball_url}")) ||
+            abort("Could not find url line in #{path}")
+
+          formula.sub!(/^  sha256\s+["'][0-9a-fA-F]{64}["']$/, %(  sha256 "#{sha256}")) ||
+            abort("Could not find sha256 line in #{path}")
+
+          File.write(path, formula)
+          RUBY
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
+          SHA256: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- Formula/acq.rb; then
+            echo "Formula/acq.rb is already current for ${TAG}."
+            exit 0
+          fi
+
+          branch="update-acq-${TAG}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "${branch}"
+          git add Formula/acq.rb
+          git commit -m "update acq formula to ${VERSION}"
+
+          git push --force-with-lease origin "${branch}"
+
+          pr_body="$(mktemp)"
+          cat > "${pr_body}" <<EOF
+          Updates the acq Homebrew formula for GSA-TTS/agentic-coding-quickstart ${TAG}.
+
+          Source tarball:
+          ${TARBALL_URL}
+
+          SHA-256:
+          \`${SHA256}\`
+
+          Verification:
+          - Resolved release tag from GSA-TTS/agentic-coding-quickstart
+          - Downloaded the GitHub release source tarball
+          - Recomputed sha256 locally in this workflow
+          - Updated \`Formula/acq.rb\`
+          EOF
+
+          if gh pr view "${branch}" --json number >/dev/null 2>&1; then
+            gh pr edit "${branch}" \
+              --title "Update acq formula to ${VERSION}" \
+              --body-file "${pr_body}"
+          else
+            gh pr create \
+              --base main \
+              --head "${branch}" \
+              --title "Update acq formula to ${VERSION}" \
+              --body-file "${pr_body}"
+          fi
