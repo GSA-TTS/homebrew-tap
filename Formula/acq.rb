@@ -5,7 +5,7 @@ class Acq < Formula
   sha256 "adaaabe719804c18d462d70a2637bef297402bbaf36a8a81df965a80d3f0474c"
   license "CC0-1.0"
 
-  depends_on "superradcompany/tap/microsandbox"
+  depends_on "GSA-TTS/tap/microsandbox-acq"
 
   def install
     libexec.install "acq", "acq.backends"
