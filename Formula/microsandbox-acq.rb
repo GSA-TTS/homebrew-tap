@@ -1,16 +1,25 @@
 # typed: false
 # frozen_string_literal: true
 
+# Version-pinned microsandbox for acq.
+#
+# Upstream's tap carries a single always-latest `microsandbox.rb` that is bumped
+# in place on every release, so a dependent cannot pin or hold a version. acq
+# needs to, because specific msb releases have to be avoided during upstream
+# compatibility windows. This formula is that pin; `Formula/acq.rb` depends on it
+# instead of upstream's.
+#
+# Keep this tracking the version acq's installer and version gate treat as the
+# known-good default.
 class MicrosandboxAcq < Formula
-  desc "Spins up lightweight VMs in milliseconds from SDKs"
+  desc "Spins up lightweight VMs in milliseconds from SDKs (version-pinned for acq)"
   homepage "https://microsandbox.dev"
   version "0.6.18"
   license "Apache-2.0"
-  conflicts_with "superradcompany/tap/microsandbox"
 
-  # libkrunfw versioned filenames (must match the build)
-  LIBKRUNFW_VERSION = "5.2.1"
-  LIBKRUNFW_ABI = "5"
+  # Both formulae own bin/msb, so Homebrew cannot link both.
+  conflicts_with "superradcompany/tap/microsandbox",
+                 because: "both install the msb binary"
 
   on_macos do
     on_arm do
@@ -48,16 +57,26 @@ class MicrosandboxAcq < Formula
     libexec.install "msb"
 
     if OS.mac?
-      # Tarball contains: libkrunfw.5.dylib
-      libexec.install "libkrunfw.#{LIBKRUNFW_ABI}.dylib"
-      libexec.install_symlink libexec/"libkrunfw.#{LIBKRUNFW_ABI}.dylib" => "libkrunfw.dylib"
+      # macOS bundles ship the ABI-only name, which is stable across releases.
+      libexec.install "libkrunfw.5.dylib"
+      libexec.install_symlink libexec/"libkrunfw.5.dylib" => "libkrunfw.dylib"
     end
 
     if OS.linux?
-      # Tarball contains: libkrunfw.so.5.2.1
-      libexec.install "libkrunfw.so.#{LIBKRUNFW_VERSION}"
-      libexec.install_symlink libexec/"libkrunfw.so.#{LIBKRUNFW_VERSION}" => "libkrunfw.so.#{LIBKRUNFW_ABI}"
-      libexec.install_symlink libexec/"libkrunfw.so.#{LIBKRUNFW_VERSION}" => "libkrunfw.so"
+      # Linux bundles ship a FULLY-versioned soname whose version tracks the
+      # bundled kernel, not msb: 5.2.1 through v0.6.1, 5.5.0 at v0.6.3, 5.6.0 at
+      # v0.6.7, 5.6.1 since v0.6.8. Hardcoding it breaks the install on every
+      # release that bumps it (upstream's formula still names 5.2.1 and so fails
+      # on Linux), so discover the artifact and derive the ABI from its name.
+      lib = Dir["libkrunfw.so.*.*.*"].first
+      odie "release bundle contains no versioned libkrunfw shared library" if lib.nil?
+
+      abi = lib[/\Alibkrunfw\.so\.(\d+)\./, 1]
+      odie "cannot parse libkrunfw ABI from #{lib}" if abi.nil?
+
+      libexec.install lib
+      libexec.install_symlink libexec/lib => "libkrunfw.so.#{abi}"
+      libexec.install_symlink libexec/lib => "libkrunfw.so"
     end
 
     bin.mkpath
