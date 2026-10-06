@@ -19,6 +19,7 @@ that `acq` supports.
 | `microsandbox-acq` | yes | The `msb` sandbox runtime, pinned to the version `acq` supports. `acq` depends on this. |
 | `microsandbox-acq@0.6.18` | no (keg-only) | msb 0.6.18, for reaching that version deliberately. |
 | `microsandbox-acq@0.7.3` | no (keg-only) | msb 0.7.3, for reaching that version deliberately. |
+| `microsandbox-acq@0.7.7` | no (keg-only) | msb 0.7.7, for reaching that version deliberately. |
 
 ## Why this tap carries microsandbox formulas
 
@@ -35,8 +36,8 @@ prefix, so any number of them can be installed side by side, alongside the linke
 `microsandbox-acq`, without shadowing the `msb` on your PATH. Invoke one by path:
 
 ```sh
-brew install GSA-TTS/tap/microsandbox-acq@0.7.3
-"$(brew --prefix microsandbox-acq@0.7.3)/bin/msb" --version
+brew install GSA-TTS/tap/microsandbox-acq@0.7.7
+"$(brew --prefix microsandbox-acq@0.7.7)/bin/msb" --version
 ```
 
 Use those when you need a specific msb without disturbing your working one — for

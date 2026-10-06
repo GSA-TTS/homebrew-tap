@@ -14,7 +14,7 @@
 class MicrosandboxAcq < Formula
   desc "Spins up lightweight VMs in milliseconds from SDKs (version-pinned for acq)"
   homepage "https://microsandbox.dev"
-  version "0.6.18"
+  version "0.7.7"
   license "Apache-2.0"
 
   # Both formulae own bin/msb, so Homebrew cannot link both.
@@ -24,7 +24,7 @@ class MicrosandboxAcq < Formula
   on_macos do
     on_arm do
       url "https://github.com/superradcompany/microsandbox/releases/download/v#{version}/microsandbox-darwin-aarch64.tar.gz"
-      sha256 "1e8c40859142cd38fb99b301bdb1fb4095a985a4065d080f99b3a3e7cb9a6305"
+      sha256 "eed5faa16217ad375ad9a4eb5e819656baeab8ccde0d3ab7e79c4af49319d403"
     end
 
     on_intel do
@@ -35,12 +35,12 @@ class MicrosandboxAcq < Formula
   on_linux do
     on_arm do
       url "https://github.com/superradcompany/microsandbox/releases/download/v#{version}/microsandbox-linux-aarch64.tar.gz"
-      sha256 "e53098e7601fddd85af7e943d4af3d4370ace276d9e863a89456338f2d076d1b"
+      sha256 "8997b1ea76de58689fb6d0fa7b32af6fbe8cbc24612da40b168a5b433c7d8318"
     end
 
     on_intel do
       url "https://github.com/superradcompany/microsandbox/releases/download/v#{version}/microsandbox-linux-x86_64.tar.gz"
-      sha256 "b001b3c6b980ab1ffcceb817496648c1520dba36b9e0caac37ea8d2f4acd9bdd"
+      sha256 "b3cc4a5e3f52dfdd938a6f67ac4a9a959ddfe304bab56de4964044b8613f01bb"
     end
   end
 
