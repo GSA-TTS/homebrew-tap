@@ -22,7 +22,8 @@ concurrency:
 jobs:
   update-formula:
     name: Update Formula/acq.rb
-    runs-on: ubuntu-latest
+    # Keep this scheduled updater on a tested runner image until Ubuntu 26 is validated.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out homebrew tap
