@@ -22,7 +22,8 @@ concurrency:
 jobs:
   update-formula:
     name: Update Formula/acq.rb
-    runs-on: ubuntu-latest
+    # Keep this scheduled updater on a tested runner image until Ubuntu 26 is validated.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out homebrew tap
@@ -116,11 +117,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Fetch the reusable PR branch so force-with-lease has an expected SHA.
+          remote_branch="$(git ls-remote --heads origin "refs/heads/${branch}")"
+          if [ -n "${remote_branch}" ]; then
+            lease_sha="${remote_branch%%$'\t'*}"
+          else
+            lease_sha=""
+          fi
+
           git checkout -B "${branch}"
           git add Formula/acq.rb
           git commit -m "update acq formula to ${VERSION}"
 
-          git push --force-with-lease origin "${branch}"
+          if [ -n "${lease_sha}" ]; then
+            git push --force-with-lease="refs/heads/${branch}:${lease_sha}" origin "${branch}"
+          else
+            git push --force-with-lease="refs/heads/${branch}:" origin "${branch}"
+          fi
 
           pr_body="$(mktemp)"
           cat > "${pr_body}" <<EOF
