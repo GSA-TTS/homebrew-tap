@@ -2,8 +2,8 @@ class Acq < Formula
   desc "Run AI coding agents inside a federally-configured sandbox"
   homepage "https://github.com/GSA-TTS/agentic-coding-quickstart"
 
-  url "https://github.com/GSA-TTS/agentic-coding-quickstart/archive/refs/tags/v4.0.2.tar.gz"
-  sha256 "7ac28fcd54c00d837ae9f6641e1c5c0334d703d570c756e2365d3f750cc62480"
+  url "https://github.com/GSA-TTS/agentic-coding-quickstart/archive/refs/tags/v4.1.0.tar.gz"
+  sha256 "ac8075a94d0b2be9b8b3c4aaecbb5026764613b7883419d36c80ea498d72b912"
 
   license "CC0-1.0"
 
