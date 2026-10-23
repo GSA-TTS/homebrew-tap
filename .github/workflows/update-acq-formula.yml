@@ -176,13 +176,15 @@ jobs:
           arm_resource = formula.include?('resource "provider-input-validator-wheelhouse-arm64"')
           x86_resource = formula.include?('resource "provider-input-validator-wheelhouse-x86-64"')
           abort("FATAL: partial wheelhouse resource state in #{path}") unless arm_resource == x86_resource
+          # Indent resource block: only prepend spaces on non-empty lines to avoid trailing whitespace.
+          indented_resources = resources.each_line.map { |l| l.chomp.empty? ? "\n" : "  #{l}" }.join.strip + "\n"
           if arm_resource
             formula.sub!(
               /  resource "provider-input-validator-wheelhouse-arm64" do.*?^  end\s+  resource "provider-input-validator-wheelhouse-x86-64" do.*?^  end\n/m,
-              "  #{resources.gsub("\n", "\n  ").strip}\n"
+              "  #{indented_resources}"
             ) || abort("FATAL: Could not replace existing wheelhouse resource blocks in #{path}")
           else
-            formula.sub!(/\n  license .+\n/, "\n  license \"CC0-1.0\"\n\n  #{resources.gsub("\n", "\n  ").strip}\n") ||
+            formula.sub!(/\n  license .+\n/, "\n  license \"CC0-1.0\"\n\n  #{indented_resources}") ||
               abort("FATAL: Could not find 'license' line to inject resource blocks in #{path}")
           end
 
@@ -228,6 +230,16 @@ jobs:
             ) || abort("FATAL: Could not find microsandbox-acq depends_on line to inject python@3.13 in #{path}")
           end
 
+          # Ensure macOS-only constraint is declared. The generated formula installs
+          # macOS-only wheelhouses and wraps a macOS-only Python interpreter; it must
+          # not silently succeed on Linuxbrew. Guard is idempotent on subsequent runs.
+          unless formula.include?("depends_on :macos")
+            formula.sub!(
+              /^  depends_on "python@3\.13"\n/,
+              %(  depends_on "python@3.13"\n  depends_on :macos\n)
+            ) || abort("FATAL: Could not find python@3.13 depends_on line to inject depends_on :macos in #{path}")
+          end
+
           # Ensure the narrow bin/acq wrapper is present.
           # The formula canonical form uses (bin/"acq").write; if only a symlink exists,
           # replace it. If the wrapper is already present, skip (idempotent).
@@ -254,6 +266,54 @@ jobs:
           File.write(path, formula)
           puts "Formula #{path} updated for #{tag}."
           RUBY
+
+      - name: Verify generated formula structure
+        if: steps.wheelhouse_check.outputs.assets_ready == 'true'
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PYTHON'
+          import sys, re
+
+          path = "Formula/acq.rb"
+          with open(path) as f:
+              formula = f.read()
+
+          errors = []
+
+          # 1. depends_on :macos must be present — macOS-only wheelhouses/python.
+          if "depends_on :macos" not in formula:
+              errors.append("FAIL: 'depends_on :macos' not found in generated formula")
+
+          # 2. Both wheelhouse resource blocks must be present (no partial state).
+          has_arm = 'resource "provider-input-validator-wheelhouse-arm64"' in formula
+          has_x86 = 'resource "provider-input-validator-wheelhouse-x86-64"' in formula
+          if has_arm != has_x86:
+              errors.append(f"FAIL: partial wheelhouse resource state (arm64={has_arm}, x86-64={has_x86})")
+
+          # 3. No trailing whitespace on any line — covers blank separator between resource blocks.
+          for i, line in enumerate(formula.splitlines(True), 1):
+              if re.match(r'^[ \t]+\n$', line):
+                  errors.append(f"FAIL: trailing whitespace on line {i}: {line!r}")
+
+          # 4. Exact shape assertion on resource block indentation.
+          #    Every 'resource "provider-input-validator-wheelhouse-' line must start with exactly 2 spaces.
+          for i, line in enumerate(formula.splitlines(True), 1):
+              if re.match(r'\s+resource "provider-input-validator-wheelhouse-', line):
+                  if not line.startswith("  resource "):
+                      errors.append(f"FAIL: resource header on line {i} not indented with exactly 2 spaces: {line!r}")
+
+          # 5. python@3.13 dependency is present.
+          if 'depends_on "python@3.13"' not in formula:
+              errors.append("FAIL: 'depends_on \"python@3.13\"' not found in generated formula")
+
+          if errors:
+              for e in errors:
+                  print(e, file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: generated formula structure checks passed ({path})")
+          PYTHON
 
       - name: Open pull request
         if: steps.wheelhouse_check.outputs.assets_ready == 'true'
