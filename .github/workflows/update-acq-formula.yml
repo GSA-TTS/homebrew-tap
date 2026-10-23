@@ -53,11 +53,15 @@ jobs:
 
           version="${tag#v}"
           tarball_url="https://github.com/GSA-TTS/agentic-coding-quickstart/archive/refs/tags/${tag}.tar.gz"
+          wheelhouse_arm64_url="https://github.com/GSA-TTS/agentic-coding-quickstart/releases/download/${tag}/provider-input-validator-wheelhouse-macos-arm64.tar.gz"
+          wheelhouse_x86_64_url="https://github.com/GSA-TTS/agentic-coding-quickstart/releases/download/${tag}/provider-input-validator-wheelhouse-macos-x86_64.tar.gz"
 
           {
             echo "tag=${tag}"
             echo "version=${version}"
             echo "tarball_url=${tarball_url}"
+            echo "wheelhouse_arm64_url=${wheelhouse_arm64_url}"
+            echo "wheelhouse_x86_64_url=${wheelhouse_x86_64_url}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Calculate source tarball sha256
@@ -72,10 +76,26 @@ jobs:
 
           echo "sha256=${sha256}" >> "${GITHUB_OUTPUT}"
 
+      - name: Calculate validator wheelhouse checksums
+        id: wheelhouses
+        env:
+          WHEELHOUSE_ARM64_URL: ${{ steps.release.outputs.wheelhouse_arm64_url }}
+          WHEELHOUSE_X86_64_URL: ${{ steps.release.outputs.wheelhouse_x86_64_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error "${WHEELHOUSE_ARM64_URL}" --output validator-wheelhouse-arm64.tar.gz
+          curl --fail --location --silent --show-error "${WHEELHOUSE_X86_64_URL}" --output validator-wheelhouse-x86_64.tar.gz
+          echo "arm64_sha256=$(sha256sum validator-wheelhouse-arm64.tar.gz | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
+          echo "x86_64_sha256=$(sha256sum validator-wheelhouse-x86_64.tar.gz | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
+
       - name: Update formula
         env:
           TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
           SHA256: ${{ steps.tarball.outputs.sha256 }}
+          WHEELHOUSE_ARM64_URL: ${{ steps.release.outputs.wheelhouse_arm64_url }}
+          WHEELHOUSE_X86_64_URL: ${{ steps.release.outputs.wheelhouse_x86_64_url }}
+          WHEELHOUSE_ARM64_SHA256: ${{ steps.wheelhouses.outputs.arm64_sha256 }}
+          WHEELHOUSE_X86_64_SHA256: ${{ steps.wheelhouses.outputs.x86_64_sha256 }}
         run: |
           set -euo pipefail
 
@@ -85,6 +105,10 @@ jobs:
           path = "Formula/acq.rb"
           tarball_url = ENV.fetch("TARBALL_URL")
           sha256 = ENV.fetch("SHA256")
+          wheelhouse_arm64_url = ENV.fetch("WHEELHOUSE_ARM64_URL")
+          wheelhouse_x86_64_url = ENV.fetch("WHEELHOUSE_X86_64_URL")
+          wheelhouse_arm64_sha256 = ENV.fetch("WHEELHOUSE_ARM64_SHA256")
+          wheelhouse_x86_64_sha256 = ENV.fetch("WHEELHOUSE_X86_64_SHA256")
 
           formula = File.read(path)
 
@@ -93,6 +117,23 @@ jobs:
 
           formula.sub!(/^  sha256\s+["'][0-9a-fA-F]{64}["']$/, %(  sha256 "#{sha256}")) ||
             abort("Could not find sha256 line in #{path}")
+          resources = <<~RESOURCE
+            resource "provider-input-validator-wheelhouse-arm64" do
+              url "#{wheelhouse_arm64_url}"
+              sha256 "#{wheelhouse_arm64_sha256}"
+            end
+
+            resource "provider-input-validator-wheelhouse-x86-64" do
+              url "#{wheelhouse_x86_64_url}"
+              sha256 "#{wheelhouse_x86_64_sha256}"
+            end
+          RESOURCE
+          if formula.include?("resource \"provider-input-validator-wheelhouse-arm64\"")
+            formula.sub!(/  resource "provider-input-validator-wheelhouse-arm64" do.*?^  end\s+  resource "provider-input-validator-wheelhouse-x86-64" do.*?^  end\n/m, "  #{resources.gsub("\n", "\n  ").strip}\n")
+          else
+            formula.sub!(/\n  license .+\n/, "\n  license \"CC0-1.0\"\n\n  #{resources.gsub("\n", "\n  ").strip}\n")
+          end
+          formula.sub!(/    libexec\.install "acq", "acq\.backends"/, "    libexec.install \"acq\", \"acq.backends\", \"scripts/setup-provider-input-validator\", \"scripts/provider-input-validator-requirements-macos.txt\"\n    resource(\"provider-input-validator-wheelhouse-arm64\").stage { (libexec/\"scripts/provider-input-validator-wheelhouse/macos-arm64\").install Dir[\"*\"] }\n    resource(\"provider-input-validator-wheelhouse-x86-64\").stage { (libexec/\"scripts/provider-input-validator-wheelhouse/macos-x86_64\").install Dir[\"*\"] }")
 
           File.write(path, formula)
           RUBY
