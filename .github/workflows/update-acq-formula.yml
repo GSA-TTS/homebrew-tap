@@ -173,7 +173,10 @@ jobs:
             end
           RESOURCE
 
-          if formula.include?('resource "provider-input-validator-wheelhouse-arm64"')
+          arm_resource = formula.include?('resource "provider-input-validator-wheelhouse-arm64"')
+          x86_resource = formula.include?('resource "provider-input-validator-wheelhouse-x86-64"')
+          abort("FATAL: partial wheelhouse resource state in #{path}") unless arm_resource == x86_resource
+          if arm_resource
             formula.sub!(
               /  resource "provider-input-validator-wheelhouse-arm64" do.*?^  end\s+  resource "provider-input-validator-wheelhouse-x86-64" do.*?^  end\n/m,
               "  #{resources.gsub("\n", "\n  ").strip}\n"
@@ -185,7 +188,12 @@ jobs:
 
           # Fix scripts install path: ensure files land under libexec/scripts/ not libexec/.
           # Guard prevents double-insertion on subsequent runs (idempotent).
-          unless formula.include?('(libexec/"scripts").install')
+          scripts_install = formula.include?('(libexec/"scripts").install')
+          setup_mentioned = formula.include?('scripts/setup-provider-input-validator')
+          requirements_mentioned = formula.include?('scripts/provider-input-validator-requirements-macos.txt')
+          if scripts_install || setup_mentioned || requirements_mentioned
+            abort("FATAL: partial validator scripts install state in #{path}") unless scripts_install && setup_mentioned && requirements_mentioned
+          else
             formula.sub!(
               /    libexec\.install "acq", "acq\.backends"/,
               %(    libexec.install "acq", "acq.backends"\n) +
@@ -196,7 +204,10 @@ jobs:
 
           # Stage wheelhouses under libexec/scripts/provider-input-validator-wheelhouse/{arch}.
           # Anchor on the continuation line (.txt" is on the second line of the two-line install).
-          unless formula.include?('resource("provider-input-validator-wheelhouse-arm64").stage')
+          arm_stage = formula.include?('resource("provider-input-validator-wheelhouse-arm64").stage')
+          x86_stage = formula.include?('resource("provider-input-validator-wheelhouse-x86-64").stage')
+          abort("FATAL: partial wheelhouse staging state in #{path}") unless arm_stage == x86_stage
+          unless arm_stage
             formula.sub!(
               /("scripts\/provider-input-validator-requirements-macos\.txt"\n)/,
               "\\1" +
@@ -220,7 +231,12 @@ jobs:
           # Ensure the narrow bin/acq wrapper is present.
           # The formula canonical form uses (bin/"acq").write; if only a symlink exists,
           # replace it. If the wrapper is already present, skip (idempotent).
-          unless formula.include?("ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON")
+          wrapper_write = formula.include?('(bin/"acq").write')
+          wrapper_env = formula.include?("ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON")
+          wrapper_exec = formula.include?('exec "#{libexec}/acq" "$@"')
+          if wrapper_write || wrapper_env || wrapper_exec
+            abort("FATAL: partial acq wrapper state in #{path}") unless wrapper_write && wrapper_env && wrapper_exec
+          else
             formula.sub!(
               /    bin\.install_symlink libexec\/"acq"\n/,
               %(    # Narrow wrapper: sets ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON to the formula-pinned\n) +
