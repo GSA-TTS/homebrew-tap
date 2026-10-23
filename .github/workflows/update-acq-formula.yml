@@ -64,8 +64,44 @@ jobs:
             echo "wheelhouse_x86_64_url=${wheelhouse_x86_64_url}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Verify required wheelhouse release assets
+        id: wheelhouse_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          WHEELHOUSE_ARM64_URL: ${{ steps.release.outputs.wheelhouse_arm64_url }}
+          WHEELHOUSE_X86_64_URL: ${{ steps.release.outputs.wheelhouse_x86_64_url }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+
+          # Use HEAD requests to probe asset availability before any download attempt.
+          # HTTP 302 redirects are followed; 404/non-2xx means the asset is absent.
+          arm64_status="$(curl --head --location --silent --output /dev/null \
+            --write-out '%{http_code}' "${WHEELHOUSE_ARM64_URL}")"
+          x86_64_status="$(curl --head --location --silent --output /dev/null \
+            --write-out '%{http_code}' "${WHEELHOUSE_X86_64_URL}")"
+
+          if [ "${arm64_status}" != "200" ]; then
+            missing="${missing} provider-input-validator-wheelhouse-macos-arm64.tar.gz (HTTP ${arm64_status})"
+          fi
+          if [ "${x86_64_status}" != "200" ]; then
+            missing="${missing} provider-input-validator-wheelhouse-macos-x86_64.tar.gz (HTTP ${x86_64_status})"
+          fi
+
+          if [ -n "${missing}" ]; then
+            echo "Wheelhouse assets not yet available for ${TAG}; skipping this run so the scheduler can retry." >&2
+            echo "Missing:${missing}" >&2
+            echo "assets_ready=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Both wheelhouse assets confirmed available for ${TAG}."
+            echo "assets_ready=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Calculate source tarball sha256
         id: tarball
+        if: steps.wheelhouse_check.outputs.assets_ready == 'true'
         env:
           TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
         run: |
@@ -78,6 +114,7 @@ jobs:
 
       - name: Calculate validator wheelhouse checksums
         id: wheelhouses
+        if: steps.wheelhouse_check.outputs.assets_ready == 'true'
         env:
           WHEELHOUSE_ARM64_URL: ${{ steps.release.outputs.wheelhouse_arm64_url }}
           WHEELHOUSE_X86_64_URL: ${{ steps.release.outputs.wheelhouse_x86_64_url }}
@@ -89,7 +126,9 @@ jobs:
           echo "x86_64_sha256=$(sha256sum validator-wheelhouse-x86_64.tar.gz | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
 
       - name: Update formula
+        if: steps.wheelhouse_check.outputs.assets_ready == 'true'
         env:
+          TAG: ${{ steps.release.outputs.tag }}
           TARBALL_URL: ${{ steps.release.outputs.tarball_url }}
           SHA256: ${{ steps.tarball.outputs.sha256 }}
           WHEELHOUSE_ARM64_URL: ${{ steps.release.outputs.wheelhouse_arm64_url }}
@@ -109,14 +148,19 @@ jobs:
           wheelhouse_x86_64_url = ENV.fetch("WHEELHOUSE_X86_64_URL")
           wheelhouse_arm64_sha256 = ENV.fetch("WHEELHOUSE_ARM64_SHA256")
           wheelhouse_x86_64_sha256 = ENV.fetch("WHEELHOUSE_X86_64_SHA256")
+          tag = ENV.fetch("TAG")
 
           formula = File.read(path)
 
+          # Each sub! call uses || abort so any unmatched pattern is a hard failure,
+          # not a silent no-op. This prevents the updater from emitting a malformed formula.
+
           formula.sub!(/^  url\s+["'].+["']$/, %(  url "#{tarball_url}")) ||
-            abort("Could not find url line in #{path}")
+            abort("FATAL: Could not find 'url' line to substitute in #{path}")
 
           formula.sub!(/^  sha256\s+["'][0-9a-fA-F]{64}["']$/, %(  sha256 "#{sha256}")) ||
-            abort("Could not find sha256 line in #{path}")
+            abort("FATAL: Could not find top-level 'sha256' line to substitute in #{path}")
+
           resources = <<~RESOURCE
             resource "provider-input-validator-wheelhouse-arm64" do
               url "#{wheelhouse_arm64_url}"
@@ -128,17 +172,75 @@ jobs:
               sha256 "#{wheelhouse_x86_64_sha256}"
             end
           RESOURCE
-          if formula.include?("resource \"provider-input-validator-wheelhouse-arm64\"")
-            formula.sub!(/  resource "provider-input-validator-wheelhouse-arm64" do.*?^  end\s+  resource "provider-input-validator-wheelhouse-x86-64" do.*?^  end\n/m, "  #{resources.gsub("\n", "\n  ").strip}\n")
+
+          if formula.include?('resource "provider-input-validator-wheelhouse-arm64"')
+            formula.sub!(
+              /  resource "provider-input-validator-wheelhouse-arm64" do.*?^  end\s+  resource "provider-input-validator-wheelhouse-x86-64" do.*?^  end\n/m,
+              "  #{resources.gsub("\n", "\n  ").strip}\n"
+            ) || abort("FATAL: Could not replace existing wheelhouse resource blocks in #{path}")
           else
-            formula.sub!(/\n  license .+\n/, "\n  license \"CC0-1.0\"\n\n  #{resources.gsub("\n", "\n  ").strip}\n")
+            formula.sub!(/\n  license .+\n/, "\n  license \"CC0-1.0\"\n\n  #{resources.gsub("\n", "\n  ").strip}\n") ||
+              abort("FATAL: Could not find 'license' line to inject resource blocks in #{path}")
           end
-          formula.sub!(/    libexec\.install "acq", "acq\.backends"/, "    libexec.install \"acq\", \"acq.backends\", \"scripts/setup-provider-input-validator\", \"scripts/provider-input-validator-requirements-macos.txt\"\n    resource(\"provider-input-validator-wheelhouse-arm64\").stage { (libexec/\"scripts/provider-input-validator-wheelhouse/macos-arm64\").install Dir[\"*\"] }\n    resource(\"provider-input-validator-wheelhouse-x86-64\").stage { (libexec/\"scripts/provider-input-validator-wheelhouse/macos-x86_64\").install Dir[\"*\"] }")
+
+          # Fix scripts install path: ensure files land under libexec/scripts/ not libexec/.
+          # Guard prevents double-insertion on subsequent runs (idempotent).
+          unless formula.include?('(libexec/"scripts").install')
+            formula.sub!(
+              /    libexec\.install "acq", "acq\.backends"/,
+              %(    libexec.install "acq", "acq.backends"\n) +
+              %(    (libexec/"scripts").install "scripts/setup-provider-input-validator",\n) +
+              %(                                "scripts/provider-input-validator-requirements-macos.txt")
+            ) || abort("FATAL: Could not find libexec.install 'acq' line in #{path}")
+          end
+
+          # Stage wheelhouses under libexec/scripts/provider-input-validator-wheelhouse/{arch}.
+          # Anchor on the continuation line (.txt" is on the second line of the two-line install).
+          unless formula.include?('resource("provider-input-validator-wheelhouse-arm64").stage')
+            formula.sub!(
+              /("scripts\/provider-input-validator-requirements-macos\.txt"\n)/,
+              "\\1" +
+              %(    resource("provider-input-validator-wheelhouse-arm64").stage do\n) +
+              %(      (libexec/"scripts/provider-input-validator-wheelhouse/macos-arm64").install Dir["*"]\n) +
+              %(    end\n) +
+              %(    resource("provider-input-validator-wheelhouse-x86-64").stage do\n) +
+              %(      (libexec/"scripts/provider-input-validator-wheelhouse/macos-x86_64").install Dir["*"]\n) +
+              %(    end\n)
+            ) || abort("FATAL: Could not inject wheelhouse staging blocks in #{path}")
+          end
+
+          # Ensure python@3.13 dependency is present.
+          unless formula.include?('depends_on "python@3.13"')
+            formula.sub!(
+              /^  depends_on "GSA-TTS\/tap\/microsandbox-acq"\n/,
+              %(  depends_on "GSA-TTS/tap/microsandbox-acq"\n  depends_on "python@3.13"\n)
+            ) || abort("FATAL: Could not find microsandbox-acq depends_on line to inject python@3.13 in #{path}")
+          end
+
+          # Ensure the narrow bin/acq wrapper is present.
+          # The formula canonical form uses (bin/"acq").write; if only a symlink exists,
+          # replace it. If the wrapper is already present, skip (idempotent).
+          unless formula.include?("ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON")
+            formula.sub!(
+              /    bin\.install_symlink libexec\/"acq"\n/,
+              %(    # Narrow wrapper: sets ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON to the formula-pinned\n) +
+              %(    # Python 3.13 interpreter, then execs the real acq entry-point in libexec.\n) +
+              %(    # PATH is NOT modified globally; only the bootstrap variable is injected.\n) +
+              %(    (bin/"acq").write <<~SH\n) +
+              %(      #!/bin/bash\n) +
+              %(      export ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON="\#{Formula["python@3.13"].opt_bin}/python3.13"\n) +
+              %(      exec "\#{libexec}/acq" "$@"\n) +
+              %(    SH\n) +
+              %(    (bin/"acq").chmod 0755\n)
+            ) || abort("FATAL: Could not inject bin/acq wrapper (expected bin.install_symlink or existing wrapper) in #{path}")
+          end
 
           File.write(path, formula)
+          puts "Formula #{path} updated for #{tag}."
           RUBY
 
       - name: Open pull request
+        if: steps.wheelhouse_check.outputs.assets_ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
@@ -188,8 +290,9 @@ jobs:
 
           Verification:
           - Resolved release tag from GSA-TTS/agentic-coding-quickstart
-          - Downloaded the GitHub release source tarball
-          - Recomputed sha256 locally in this workflow
+          - Confirmed both wheelhouse assets available (HTTP 200) before download
+          - Downloaded the GitHub release source tarball and both wheelhouse archives
+          - Recomputed sha256 for all three locally in this workflow
           - Updated \`Formula/acq.rb\`
           EOF
 
