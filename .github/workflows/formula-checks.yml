@@ -57,6 +57,16 @@ jobs:
           TAP_NAME="acq-ci-fixture/tap"
           TAP_DIR="$(brew --repository)/Library/Taps/acq-ci-fixture/homebrew-tap"
 
+          # Validate tap name and directory path before proceeding (SI-10: Input Validation).
+          if [[ ! "${TAP_NAME}" =~ ^[a-zA-Z0-9_/-]+$ ]]; then
+            echo "FATAL: TAP_NAME contains invalid characters: ${TAP_NAME}" >&2
+            exit 1
+          fi
+          if [[ ! "${TAP_DIR}" =~ ^/.*/homebrew-tap$ ]]; then
+            echo "FATAL: TAP_DIR does not match expected pattern: ${TAP_DIR}" >&2
+            exit 1
+          fi
+
           mkdir -p "${TAP_DIR}/Formula"
 
           # Homebrew requires the tap directory to be a git repository.
@@ -80,14 +90,25 @@ jobs:
           brew tap "${TAP_NAME}" "${TAP_DIR}"
 
       - name: brew style (fixture formula)
-        run: brew style "${FORMULA_FQN}"
+        run: |
+          set -euo pipefail
+          brew style "${FORMULA_FQN}"
 
       - name: brew audit --strict (fixture formula)
-        run: brew audit --strict "${FORMULA_FQN}"
+        run: |
+          set -euo pipefail
+          brew audit --strict "${FORMULA_FQN}"
 
       - name: Remove disposable tap
         if: always()
         run: |
           set -euo pipefail
-          brew untap "${TAP_NAME}" 2>/dev/null || true
-          rm -rf "${TAP_DIR}" 2>/dev/null || true
+
+          # Validate paths before cleanup (SI-10: Input Validation, AC-6: Least Privilege).
+          if [[ -n "${TAP_NAME:-}" ]]; then
+            brew untap "${TAP_NAME}" || echo "WARN: brew untap failed (tap may not exist)" >&2
+          fi
+
+          if [[ -n "${TAP_DIR:-}" ]] && [[ "${TAP_DIR}" =~ ^/.*/homebrew-tap$ ]]; then
+            rm -rf "${TAP_DIR}"
+          fi
