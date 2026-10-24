@@ -17,8 +17,8 @@ class Acq < Formula
 
   license "CC0-1.0"
 
-  depends_on :macos
   depends_on "GSA-TTS/tap/microsandbox-acq"
+  depends_on :macos
   depends_on "python@3.13"
 
   resource "provider-input-validator-wheelhouse-arm64" do

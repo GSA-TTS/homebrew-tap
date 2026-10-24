@@ -249,8 +249,8 @@ class TestUpdateFormula < Minitest::Test
     microsandbox = result.index('  depends_on "GSA-TTS/tap/microsandbox-acq"')
     python = result.index('  depends_on "python@3.13"')
     resource = result.index('  resource "provider-input-validator-wheelhouse-arm64"')
-    assert_operator macos, :<, microsandbox
-    assert_operator microsandbox, :<, python
+    assert_operator microsandbox, :<, macos
+    assert_operator macos, :<, python
     assert_operator python, :<, resource
     assert_includes result, '#{formula_opt_bin("python@3.13")}/python3.13'
     refute_includes result, 'Formula["python@3.13"].opt_bin'

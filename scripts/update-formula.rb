@@ -133,18 +133,17 @@ unless formula.include?("depends_on :macos")
   ) || abort("FATAL: Could not find python@3.13 depends_on line to inject depends_on :macos in #{path}")
 end
 
-# Homebrew requires platform constraints first, then named dependencies, and
-# all dependencies before resource blocks. Normalize the complete dependency
-# group after insertion so both fresh and previously transformed formulas
-# converge to the same ordering.
+# Homebrew orders the external tap dependency first, then the macOS constraint,
+# then the versioned Python dependency. All dependencies precede resources.
+# Normalize the complete group so fresh and transformed formulas converge.
 formula.gsub!(/^  depends_on :macos\n/, "")
 formula.gsub!(/^  depends_on "GSA-TTS\/tap\/microsandbox-acq"\n/, "")
 formula.gsub!(/^  depends_on "python@3\.13"\n/, "")
 formula.sub!(
   /^  license "CC0-1\.0"\n/,
   %(  license "CC0-1.0"\n\n) +
-  %(  depends_on :macos\n) +
   %(  depends_on "GSA-TTS/tap/microsandbox-acq"\n) +
+  %(  depends_on :macos\n) +
   %(  depends_on "python@3.13"\n)
 ) || abort("FATAL: Could not normalize dependency order in #{path}")
 
