@@ -13,6 +13,11 @@ on:
     paths:
       - "Formula/acq.rb"
       - ".github/workflows/update-acq-formula.yml"
+      - ".github/workflows/formula-checks.yml"
+      - "scripts/update-formula.rb"
+      - "test/fixtures/acq.pre.rb"
+      - "test/fixtures/acq.post.rb"
+      - "test/test_update_formula.rb"
   workflow_dispatch: {}
 
 permissions:
@@ -52,63 +57,30 @@ jobs:
       - name: Create and trust disposable local tap
         run: |
           set -euo pipefail
-
-          # Use a name that will not collide with any real tap.
           TAP_NAME="acq-ci-fixture/tap"
-          TAP_DIR="$(brew --repository)/Library/Taps/acq-ci-fixture/homebrew-tap"
-
-          # Validate tap name and directory path before proceeding (SI-10: Input Validation).
-          if [[ ! "${TAP_NAME}" =~ ^[a-zA-Z0-9_/-]+$ ]]; then
-            echo "FATAL: TAP_NAME contains invalid characters: ${TAP_NAME}" >&2
-            exit 1
-          fi
-          if [[ ! "${TAP_DIR}" =~ ^/.*/homebrew-tap$ ]]; then
-            echo "FATAL: TAP_DIR does not match expected pattern: ${TAP_DIR}" >&2
-            exit 1
-          fi
-
-          mkdir -p "${TAP_DIR}/Formula"
-
-          # Homebrew requires the tap directory to be a git repository.
-          git -C "${TAP_DIR}" init -q
-          git -C "${TAP_DIR}" config user.email "ci@example.com"
-          git -C "${TAP_DIR}" config user.name "CI"
-
-          # Install the committed post-transform fixture formula, mode 0644.
+          brew untap "${TAP_NAME}" >/dev/null 2>&1 || true
+          brew untrust "${TAP_NAME}" >/dev/null 2>&1 || true
+          brew tap-new "${TAP_NAME}"
+          brew trust "${TAP_NAME}"
+          TAP_DIR=$(brew --repository "${TAP_NAME}")
           install -m 0644 test/fixtures/acq.post.rb "${TAP_DIR}/Formula/acq.rb"
-
-          # Commit so Homebrew recognises the tap as a valid git repo.
           git -C "${TAP_DIR}" add Formula/acq.rb
           git -C "${TAP_DIR}" commit -q -m "fixture formula"
-
-          # Record the tap directory for subsequent steps.
-          echo "TAP_DIR=${TAP_DIR}" >> "${GITHUB_ENV}"
-          echo "TAP_NAME=${TAP_NAME}" >> "${GITHUB_ENV}"
-          echo "FORMULA_FQN=${TAP_NAME}/acq" >> "${GITHUB_ENV}"
-
-          # Register the local tap so brew style/audit can find it by qualified name.
-          brew tap "${TAP_NAME}" "${TAP_DIR}"
 
       - name: brew style (fixture formula)
         run: |
           set -euo pipefail
-          brew style "${FORMULA_FQN}"
+          brew style acq-ci-fixture/tap/acq
 
       - name: brew audit --strict (fixture formula)
         run: |
           set -euo pipefail
-          brew audit --strict "${FORMULA_FQN}"
+          brew audit --strict acq-ci-fixture/tap/acq
 
       - name: Remove disposable tap
         if: always()
         run: |
           set -euo pipefail
 
-          # Validate paths before cleanup (SI-10: Input Validation, AC-6: Least Privilege).
-          if [[ -n "${TAP_NAME:-}" ]]; then
-            brew untap "${TAP_NAME}" || echo "WARN: brew untap failed (tap may not exist)" >&2
-          fi
-
-          if [[ -n "${TAP_DIR:-}" ]] && [[ "${TAP_DIR}" =~ ^/.*/homebrew-tap$ ]]; then
-            rm -rf "${TAP_DIR}"
-          fi
+          brew untap acq-ci-fixture/tap >/dev/null 2>&1 || true
+          brew untrust acq-ci-fixture/tap >/dev/null 2>&1 || true
