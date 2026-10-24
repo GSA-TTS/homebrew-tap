@@ -17,6 +17,10 @@ class Acq < Formula
 
   license "CC0-1.0"
 
+  depends_on :macos
+  depends_on "GSA-TTS/tap/microsandbox-acq"
+  depends_on "python@3.13"
+
   resource "provider-input-validator-wheelhouse-arm64" do
     url "https://github.com/GSA-TTS/agentic-coding-quickstart/releases/download/v9.9.9-fixture/provider-input-validator-wheelhouse-macos-arm64.tar.gz"
     sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -26,10 +30,6 @@ class Acq < Formula
     url "https://github.com/GSA-TTS/agentic-coding-quickstart/releases/download/v9.9.9-fixture/provider-input-validator-wheelhouse-macos-x86_64.tar.gz"
     sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   end
-
-  depends_on "GSA-TTS/tap/microsandbox-acq"
-  depends_on "python@3.13"
-  depends_on :macos
 
   def install
     libexec.install "acq", "acq.backends"
@@ -46,7 +46,7 @@ class Acq < Formula
     # PATH is NOT modified globally; only the bootstrap variable is injected.
     (bin/"acq").write <<~SH
       #!/bin/bash
-      export ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON="#{Formula["python@3.13"].opt_bin}/python3.13"
+      export ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON="#{formula_opt_bin("python@3.13")}/python3.13"
       exec "#{libexec}/acq" "$@"
     SH
     (bin/"acq").chmod 0755

@@ -133,6 +133,21 @@ unless formula.include?("depends_on :macos")
   ) || abort("FATAL: Could not find python@3.13 depends_on line to inject depends_on :macos in #{path}")
 end
 
+# Homebrew requires platform constraints first, then named dependencies, and
+# all dependencies before resource blocks. Normalize the complete dependency
+# group after insertion so both fresh and previously transformed formulas
+# converge to the same ordering.
+formula.gsub!(/^  depends_on :macos\n/, "")
+formula.gsub!(/^  depends_on "GSA-TTS\/tap\/microsandbox-acq"\n/, "")
+formula.gsub!(/^  depends_on "python@3\.13"\n/, "")
+formula.sub!(
+  /^  license "CC0-1\.0"\n/,
+  %(  license "CC0-1.0"\n\n) +
+  %(  depends_on :macos\n) +
+  %(  depends_on "GSA-TTS/tap/microsandbox-acq"\n) +
+  %(  depends_on "python@3.13"\n)
+) || abort("FATAL: Could not normalize dependency order in #{path}")
+
 # ---------------------------------------------------------------------------
 # 7. Narrow bin/acq wrapper
 # ---------------------------------------------------------------------------
@@ -151,7 +166,7 @@ else
     %(    # PATH is NOT modified globally; only the bootstrap variable is injected.\n) +
     %(    (bin/"acq").write <<~SH\n) +
     %(      #!/bin/bash\n) +
-    %(      export ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON="\#{Formula["python@3.13"].opt_bin}/python3.13"\n) +
+    %(      export ACQ_PROVIDER_INPUT_BOOTSTRAP_PYTHON="\#{formula_opt_bin("python@3.13")}/python3.13"\n) +
     %(      exec "\#{libexec}/acq" "$@"\n) +
     %(    SH\n) +
     %(    (bin/"acq").chmod 0755\n)
@@ -162,5 +177,6 @@ end
 # Write result
 # ---------------------------------------------------------------------------
 
+formula.gsub!(/\n{3,}/, "\n\n")
 File.write(path, formula)
 $stdout.puts "Formula #{path} updated for #{tag}."

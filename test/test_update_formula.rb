@@ -242,6 +242,20 @@ class TestUpdateFormula < Minitest::Test
       "Trailing whitespace found in generated formula:\n#{violations.join("\n")}"
   end
 
+  def test_homebrew_dependency_and_wrapper_style_order
+    result, exit_status = run_updater(pre_formula)
+    assert_equal 0, exit_status
+    macos = result.index("  depends_on :macos\n")
+    microsandbox = result.index('  depends_on "GSA-TTS/tap/microsandbox-acq"')
+    python = result.index('  depends_on "python@3.13"')
+    resource = result.index('  resource "provider-input-validator-wheelhouse-arm64"')
+    assert_operator macos, :<, microsandbox
+    assert_operator microsandbox, :<, python
+    assert_operator python, :<, resource
+    assert_includes result, '#{formula_opt_bin("python@3.13")}/python3.13'
+    refute_includes result, 'Formula["python@3.13"].opt_bin'
+  end
+
   # -------------------------------------------------------------------------
   # Helpers
   # -------------------------------------------------------------------------
