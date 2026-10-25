@@ -1,0 +1,86 @@
+name: macOS Formula Checks
+
+# Triggered on pull requests that touch the formula or the updater workflow.
+# Validates brew style, brew audit --strict, and the updater transformation
+# (fixtures, idempotency, partial-state fail-closed, no trailing whitespace).
+#
+# Real `brew install` / `brew test` are NOT run here because fixture asset
+# URLs are synthetic.  Those gates belong on the separately-generated
+# post-release formula PR where wheelhouse assets exist.  See issue #12.
+
+on:
+  pull_request:
+    paths:
+      - "Formula/acq.rb"
+      - ".github/workflows/update-acq-formula.yml"
+      - ".github/workflows/formula-checks.yml"
+      - "scripts/update-formula.rb"
+      - "test/fixtures/acq.pre.rb"
+      - "test/fixtures/acq.post.rb"
+      - "test/test_update_formula.rb"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formula-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formula-checks:
+    name: macOS formula checks
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # -----------------------------------------------------------------------
+      # 1. Updater transformation tests (Ruby / Minitest, no network)
+      # -----------------------------------------------------------------------
+      - name: Run updater transformation tests
+        run: ruby test/test_update_formula.rb
+
+      # -----------------------------------------------------------------------
+      # 2. brew style + brew audit --strict on a disposable local tap
+      #
+      # We create a temporary tap, copy the committed fixture formula (post-
+      # transform) into it, run the checks by fully qualified formula name, and
+      # tear everything down regardless of pass/fail.
+      #
+      # brew install / brew test are intentionally omitted: the fixture URLs are
+      # synthetic.  See the workflow header for the rationale.
+      # -----------------------------------------------------------------------
+      - name: Create and trust disposable local tap
+        run: |
+          set -euo pipefail
+          TAP_NAME="acq-ci-fixture/tap"
+          brew untap "${TAP_NAME}" >/dev/null 2>&1 || true
+          brew untrust "${TAP_NAME}" >/dev/null 2>&1 || true
+          brew tap-new "${TAP_NAME}"
+          brew trust "${TAP_NAME}"
+          TAP_DIR=$(brew --repository "${TAP_NAME}")
+          install -m 0644 test/fixtures/acq.post.rb "${TAP_DIR}/Formula/acq.rb"
+          git -C "${TAP_DIR}" add Formula/acq.rb
+          git -C "${TAP_DIR}" commit -q -m "fixture formula"
+
+      - name: brew style (fixture formula)
+        run: |
+          set -euo pipefail
+          brew style acq-ci-fixture/tap/acq
+
+      - name: brew audit --strict (fixture formula)
+        run: |
+          set -euo pipefail
+          brew audit --strict acq-ci-fixture/tap/acq
+
+      - name: Remove disposable tap
+        if: always()
+        run: |
+          set -euo pipefail
+
+          brew untap acq-ci-fixture/tap >/dev/null 2>&1 || true
+          brew untrust acq-ci-fixture/tap >/dev/null 2>&1 || true
